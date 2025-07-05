@@ -1,145 +1,140 @@
-# -*- coding:utf-8 -*-
-from __future__ import absolute_import, division, print_function
-from codecs import open as open
-
-import torch
-from preprocess import process_poems, start_token
-import pdb
-import tqdm
-import numpy as np
+# main.py
 import argparse
-import sys
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from utils.preprocess import load_data, build_vocab, process_data, PoemDataset
+from models.rnn_model import RNNModel
+from models.transformer_model import TransformerModel
 import os
-import random
-from preprocess import pos2PE
-torch.manual_seed(0)
 
-def sequence_collate(batch):
-    transposed = zip(*batch)
-    ret = [torch.nn.utils.rnn.pack_sequence(sorted(samples, key = len, reverse = True)) for samples in transposed]
-    # ret = [torch.nn.utils.rnn.pack_sequence(samples) for samples in transposed]
-    return ret
+# 设置随机种子，确保结果可复现
+torch.manual_seed(42)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(42)
 
-
-def prob_sample(w_list, topn = 10):
-    samples = []
-    for weights in w_list:
-        idx = np.argsort(weights)[::-1]
-        t = np.cumsum(weights[idx[:topn]])
-        s = np.sum(weights[idx[:topn]])
-        sample = int(np.searchsorted(t, np.random.rand(1) * s))
-        samples.append(idx[sample])
-    return np.array(samples)
-
-
-def infer(model, final, words, word2int, emb, hidden_size=256, start=u'春', n=1, num=5):
-    dim_PE = 100
-    PE_const = 1000
-    device = torch.device('cpu') if isinstance(final.weight, torch.FloatTensor) else final.weight.get_device()
-    h = torch.zeros((1, n, hidden_size))
-    x = torch.nn.functional.embedding(torch.full((n,), word2int[start[0]], dtype=torch.long), emb).unsqueeze(0)
-    ret = [[start[0]] for i in range(n)]
-    for i in range(num * 4 - 1):
-        # add PE dims
-        pe = torch.tensor(pos2PE((i % num) + 1), dtype=torch.float).repeat(1, n, 1)
+def train_model(model, dataloader, vocab_size, epochs=10, lr=0.001, model_type="rnn"):
+    """训练模型"""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    for epoch in range(epochs):
+        total_loss = 0
+        model.train()
         
-        x, h, pe = x.to(device), h.to(device), pe.to(device)
-        x = torch.cat((x, pe), dim=2)
-        x, h = model(x, h)
-        if i % num == num - 1 and i // num + 1 < len(start):
-            w = np.array([word2int[start[i // num + 1]] for _ in range(n)])
-        else:
-            w = prob_sample(torch.nn.functional.softmax(final(x.view(-1, hidden_size)), dim=-1).data.cpu().numpy())
-        x = torch.nn.functional.embedding(torch.from_numpy(w), emb).unsqueeze(0)
-        for j in range(len(w)):
-            ret[j].append(words[w[j]])
-            if i % num == num - 2:
-                if sys.version_info.major == 2:
-                    ret[j].append(u"，" if i // num % 2 == 0 else u"。")
-                else:
-                    ret[j].append("，" if i // num % 2 == 0 else "。")
-    ret_list = []
-    for i in range(n):
-        if sys.version_info.major == 2:
-            ret_list.append(u"".join(ret[i]))
-        else:
-            ret_list.append("".join(ret[i]))
-    return ret_list
-
-
-def main(epoch=10, batch_size=4, hidden_size=256, save_dir='./model', save_name='current.pth'):
-    dataset, words, word2int = process_poems('./data/poems.txt', './data/sgns.sikuquanshu.word')
-    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=sequence_collate)
-    model = torch.nn.GRU(input_size=dataset.emb_dim, hidden_size=hidden_size)
-    final = torch.nn.Linear(hidden_size, dataset.voc_size, bias=False)
-    opt = torch.optim.Adam(list(model.parameters()) + list(final.parameters()))
-    if torch.cuda.is_available():
-        model, final = model.cuda(), final.cuda()
-
-    for epoch in range(epoch):
-        data_iter = tqdm.tqdm(enumerate(loader),
-                              desc="EP_%d" % (epoch),
-                              total=len(loader),
-                              bar_format="{l_bar}{r_bar}")
-        for i, data in data_iter:
-            data, label = data
-            # pdb.set_trace()
-            if torch.cuda.is_available():
-                data, label = data.cuda(), label.cuda()
-            pred, _ = model(data)
-            pred = final(pred.data)
-            loss = torch.nn.functional.cross_entropy(pred, label.data)
-            opt.zero_grad()
+        for inputs, targets in dataloader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            
+            optimizer.zero_grad()
+            
+            if model_type == "rnn":
+                # RNN模型需要初始化隐藏状态
+                hidden = None
+                outputs, _ = model(inputs, hidden)
+            else:
+                # Transformer模型直接处理
+                outputs = model(inputs)
+            
+            # 计算损失
+            loss = criterion(outputs.view(-1, vocab_size), targets.view(-1))
             loss.backward()
-            opt.step()
-
-            # print(loss)
-
-            if i % 100 == 0:
-                post_fix = {
-                    "epoch": epoch,
-                    "iter": i,
-                    "loss": loss.item(),
-                    "example": infer(model, final, words, word2int, dataset.emb, hidden_size = hidden_size, num = 5 if random.random() < 0.5 else 7)
-                }
-                if sys.version_info.major == 2:
-                    data_iter.write(unicode(post_fix))
-                else:
-                    data_iter.write(str(post_fix))
-        # break
-
-        tmp_infer_rst = infer(model, final, words, word2int, dataset.emb, hidden_size = hidden_size, n=5, num=5)
-        if sys.version_info.major == 2:
-            tmp_infer_rst = u"\n".join(tmp_infer_rst).encode('utf-8')
-        else:
-            tmp_infer_rst = "\n".join(tmp_infer_rst)
-        print(tmp_infer_rst)
-
-        tmp_infer_rst = infer(model, final, words, word2int, dataset.emb, hidden_size = hidden_size, n=5, num=7)
-        if sys.version_info.major == 2:
-            tmp_infer_rst = u"\n".join(tmp_infer_rst).encode('utf-8')
-        else:
-            tmp_infer_rst = "\n".join(tmp_infer_rst)
-        print(tmp_infer_rst)
+            
+            # 梯度裁剪，防止梯度爆炸
+            nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            
+            optimizer.step()
+            total_loss += loss.item()
+        
+        # 打印训练进度
+        avg_loss = total_loss / len(dataloader)
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
     
-    print('Saving...')
-    torch.save({
-        'model': model.cpu(),
-        'final': final.cpu(),
-        'words': words,
-        'word2int': word2int,
-        'emb': dataset.emb
-    }, os.path.join(save_dir, save_name))
+    return model
+
+def main(args):
+    # 加载数据
+    poems = load_data("data/poems.txt")
+    vocab, word2idx, idx2word = build_vocab(poems)
     
+    # 根据诗体类型设置最大序列长度
+    max_len = 30 if args.poem_type == "五言" else 40  # 五言30，七言40
+    
+    # 处理古诗数据
+    processed_poems = process_data(poems, word2idx, poem_type=args.poem_type)
+    
+    # 创建数据集（统一长度）
+    dataset = PoemDataset(
+        processed_poems, 
+        vocab, 
+        word2idx, 
+        idx2word,
+        max_len=max_len
+    )
+    
+    # 创建数据加载器
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=args.batch_size, 
+        shuffle=True
+    )
+    
+    vocab_size = len(vocab)
+    
+    # 创建模型
+    if args.model_type == "rnn":
+        model = RNNModel(
+            vocab_size=vocab_size,
+            embed_dim=args.embed_dim,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers
+        )
+        # 模型保存路径：区分五言/七言，方便app.py加载
+        model_path = f"models/rnn_{args.poem_type}.pth"
+    else:
+        model = TransformerModel(
+            vocab_size=vocab_size,
+            embed_dim=args.embed_dim,
+            nhead=args.nhead,
+            nhid=args.nhid,
+            nlayers=args.nlayers
+        )
+        model_path = f"models/transformer_{args.poem_type}.pth"
+    
+    # 确保模型目录存在
+    os.makedirs("models", exist_ok=True)
+    
+    # 训练模型
+    print(f"开始训练 {args.model_type.upper()} 模型（{args.poem_type}）...")
+    trained_model = train_model(
+        model=model,
+        dataloader=dataloader,
+        vocab_size=vocab_size,
+        epochs=args.epochs,
+        lr=args.lr,
+        model_type=args.model_type
+    )
+    
+    # 保存模型
+    torch.save(trained_model.state_dict(), model_path)
+    print(f"模型已保存至: {model_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-e", "--epoch", type=int, default=10, help="number of epochs")
-    parser.add_argument("-b", "--batch_size", type=int, default=4, help="number of batch_size")
-    parser.add_argument("-hs", "--hidden_size", type=int, default=256, help="hidden size of RNN")
-    parser.add_argument('-d', "--save_dir", type = str, default = './model', help='directory to save files in')
-    parser.add_argument('-n', "--name", type=str, default='current.pth', help='file name')
+    parser = argparse.ArgumentParser(description="古诗生成模型训练")
+    parser.add_argument("--model_type", type=str, default="rnn", choices=["rnn", "transformer"], help="模型类型")
+    parser.add_argument("--poem_type", type=str, default="五言", choices=["五言", "七言"], help="诗体类型")
+    parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
+    parser.add_argument("--epochs", type=int, default=20, help="训练轮数（建议20+）")
+    parser.add_argument("--lr", type=float, default=0.001, help="学习率")
+    parser.add_argument("--embed_dim", type=int, default=128, help="嵌入层维度")
+    parser.add_argument("--hidden_dim", type=int, default=256, help="RNN隐藏层维度")
+    parser.add_argument("--num_layers", type=int, default=2, help="RNN层数")
+    parser.add_argument("--nhead", type=int, default=4, help="Transformer头数")
+    parser.add_argument("--nhid", type=int, default=256, help="Transformer前馈网络维度")
+    parser.add_argument("--nlayers", type=int, default=2, help="Transformer层数")
+    
     args = parser.parse_args()
-    print(args)
-
-    main(epoch=args.epoch, batch_size=args.batch_size, hidden_size=args.hidden_size, save_dir = args.save_dir, save_name = args.name)
+    main(args)
