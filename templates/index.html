@@ -124,6 +124,10 @@
             {% if generated_poem %}
             <div class="mt-10 p-6 bg-amber-50 border border-amber-200 rounded-lg">
                 <h2 class="text-xl font-semibold text-center mb-4">生成的古诗</h2>
+               
+                <h2 class="text-2xl font-bold text-center mb-2 text-gray-800">{{ generated_title }}</h2>
+
+
                 <pre class="poem-style whitespace-pre-line">
                     {{ generated_poem }}
                     </pre>
