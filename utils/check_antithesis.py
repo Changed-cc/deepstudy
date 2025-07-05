@@ -1,42 +1,48 @@
-# check_antithesis.py
-import re
-from cnradical import Radical
+import jieba.posseg as pseg
+from pypinyin import pinyin, Style
 
-radical = Radical(options={"radical": True})
+def get_pos_tags(sentence):
+    return [flag for word, flag in pseg.cut(sentence)]
 
-def is_chinese(word):
-    return '\u4e00' <= word <= '\u9fff'
-
-def is_antithesis(line1, line2):
-    if len(line1) != len(line2):
-        return False
-    score = 0
-    for a, b in zip(line1, line2):
-        if is_chinese(a) and is_chinese(b):
-            try:
-                if radical.radical(a) != radical.radical(b):
-                    score += 1
-            except:
-                continue
-    return score >= len(line1) // 2
-
-def check_poem(poem):
-    poem = re.sub(r'[^\u4e00-\u9fa5，。]', '', poem)
-    lines = poem.replace('。', '。\n').split('\n')
-    lines = [l.strip('，。') for l in lines if l.strip()]
-    for i in range(0, len(lines)-1, 2):
-        a, b = lines[i], lines[i+1]
-        print(f"【对仗检测】\n{a}\n{b}")
-        if is_antithesis(a, b):
-            print("对仗良好\n")
+def get_pingze_list(sentence):
+    """返回平仄序列（平：0，仄：1）"""
+    result = []
+    for py in pinyin(sentence, style=Style.TONE3, strict=False):
+        tone = py[0][-1]
+        if tone in "1357":  # 平声
+            result.append(0)
+        elif tone in "2468":  # 仄声
+            result.append(1)
         else:
-            print("不对仗\n")
+            result.append(-1)  # 无法判断
+    return result
 
-if __name__ == '__main__':
-    poem = """
-春风又绿江南岸，
-明月何时照我还。
-山远天高烟水寒，
-相思枫叶丹。
-"""
-    check_poem(poem)
+def check_antithesis_line_pair(line1, line2):
+    if len(line1) != len(line2):
+        return False, "字数不一致"
+
+    pos1 = get_pos_tags(line1)
+    pos2 = get_pos_tags(line2)
+    pos_match = all(p1[0] == p2[0] for p1, p2 in zip(pos1, pos2))
+
+    pingze1 = get_pingze_list(line1)
+    pingze2 = get_pingze_list(line2)
+    pingze_match = all(p1 != p2 for p1, p2 in zip(pingze1, pingze2) if p1 != -1 and p2 != -1)
+
+    if pos_match and pingze_match:
+        return True, "词性 + 平仄对仗"
+    elif pos_match:
+        return False, "词性对仗，平仄不对"
+    elif pingze_match:
+        return False, "平仄对仗，词性不对"
+    else:
+        return False, "词性 + 平仄都不对"
+
+def check_poem_antithesis(poem: str):
+    print("【对仗检测报告】\n")
+    lines = [line.strip("，。") for line in poem.strip().splitlines() if line.strip()]
+    
+    for i in range(0, len(lines) - 1, 2):
+        line1, line2 = lines[i], lines[i + 1]
+        matched, message = check_antithesis_line_pair(line1, line2)
+        print(f"👉「{line1}」vs「{line2}」\n  🔍 {message}\n")
