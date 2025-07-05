@@ -1,1 +1,23 @@
-.idea/
+# 忽略虚拟环境目录
+myenv/
+venv/
+.venv/
+
+# 忽略 PyTorch 动态链接库、词向量、模型等大文件
+*.dll
+*.lib
+*.bin
+*.pt
+*.h5
+*.ckpt
+
+# 忽略词向量文件
+data/sgns.sikuquanshu.word
+
+# Python 编译中间文件
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter Notebook 检查点
+.ipynb_checkpoints/
