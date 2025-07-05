@@ -142,8 +142,19 @@
                 </div>
             </div>
             {% endif %}
-        </main>
 
+            {% if antithesis_result %}
+            <div class="mt-6 text-sm text-gray-700">
+                <h3 class="font-semibold">对仗检测结果：</h3>
+                <ul class="list-disc list-inside mt-2">
+                    {% for pair, ok in antithesis_result %}
+                        <li>{{ pair[0] }} | {{ pair[1] }} → {{ '✔ 对仗' if ok else '✘ 不对仗' }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+        </main>
         <footer class="text-center text-gray-600 py-4">
             <p>古诗生成系统 &copy; 2025 | 基于深度学习的古诗创作助手</p>
         </footer>

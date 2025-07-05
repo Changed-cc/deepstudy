@@ -9,6 +9,8 @@ from models.transformer_model import TransformerModel
 from utils.preprocess import load_data, build_vocab
 from utils.sampling import sample_next_token
 from utils.poem_formatter import format_poem
+from utils.check_antithesis import check_poem_antithesis
+
 
 app = FastAPI()
 
@@ -40,6 +42,7 @@ async def generate(request: Request):
     model_type = form_data.get("model_type", "rnn")
     poem_type = form_data.get("poem_type", "五言")
     temperature = float(form_data.get("temperature", 0.8))
+    
 
     # 根据诗体设置最大长度
     if poem_type == '五言':
@@ -115,6 +118,9 @@ async def generate(request: Request):
 
     # 格式化输出正文
     formatted_poem = format_poem(generated_tokens, poem_type)
+    # 检测对仗
+    antithesis_result = check_poem_antithesis(formatted_poem)
+
 
     return templates.TemplateResponse("index.html", {
         "request": request,
@@ -124,5 +130,6 @@ async def generate(request: Request):
         "temperature": temperature,
         "max_length": max_length,
         "generated_poem": formatted_poem,
-        "generated_title": clean_title  # 模板中添加 {{ generated_title }} 显示标题
+        "generated_title": clean_title,  # 模板中添加 {{ generated_title }} 显示标题
+        "antithesis_result": antithesis_result
     })
