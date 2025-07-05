@@ -16,11 +16,22 @@ class PositionalEncoding(nn.Module):
         # x shape: (batch_size, seq_len, embed_dim)
         return x + self.pe[:x.size(1)]
 
+class LearnablePositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        self.pos_embed = nn.Embedding(max_len, d_model)
+
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, embed_dim)
+        positions = torch.arange(0, x.size(1), device=x.device).unsqueeze(0)
+        return x + self.pos_embed(positions)
+
+
 class TransformerModel(nn.Module):
     def __init__(self, vocab_size, embed_dim, nhead, nhid, nlayers, dropout=0.5):
         super(TransformerModel, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim)
-        self.pos_encoder = PositionalEncoding(embed_dim)
+        self.pos_encoder = LearnablePositionalEncoding(embed_dim)
         encoder_layers = nn.TransformerEncoderLayer(embed_dim, nhead, nhid, dropout)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, nlayers)
         self.decoder = nn.Linear(embed_dim, vocab_size)

@@ -51,6 +51,10 @@ def build_vocab(poems):
     idx2word = {i: w for i, w in enumerate(vocab)}
     return vocab, word2idx, idx2word
 
+def is_couplet_aligned(poem, char_per_line):
+    lines = [poem[i:i+char_per_line] for i in range(0, len(poem), char_per_line)]
+    return all(len(l) == char_per_line for l in lines) and len(lines) % 2 == 0
+
 def process_data(poems, word2idx, poem_type='五言'):
     # 处理五言或七言古诗
     processed_poems = []
@@ -60,9 +64,15 @@ def process_data(poems, word2idx, poem_type='五言'):
         # 过滤不符合长度的诗
         if len(poem) < 20 or len(poem) > 80:
             continue
+
+        # 判断是否对联数相等且每行字数一致（粗略对仗判断）
+        if not is_couplet_aligned(poem, char_per_line):
+            continue
             
         # 添加开始和结束标记
         processed_poem = '<START>' + poem + '<END>'
         processed_poems.append(processed_poem)
         
     return processed_poems
+
+

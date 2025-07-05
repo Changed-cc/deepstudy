@@ -8,6 +8,7 @@ from utils.preprocess import load_data, build_vocab, process_data, PoemDataset
 from models.rnn_model import RNNModel
 from models.transformer_model import TransformerModel
 import os
+import matplotlib.pyplot as plt
 
 # 设置随机种子，确保结果可复现
 torch.manual_seed(42)
@@ -15,45 +16,46 @@ if torch.cuda.is_available():
     torch.cuda.manual_seed_all(42)
 
 def train_model(model, dataloader, vocab_size, epochs=10, lr=0.001, model_type="rnn"):
-    """训练模型"""
+    """训练模型，返回 loss 和 perplexity 记录"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    
+
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    
+
+    loss_list = []
+    ppl_list = []
+
     for epoch in range(epochs):
         total_loss = 0
         model.train()
-        
+
         for inputs, targets in dataloader:
             inputs, targets = inputs.to(device), targets.to(device)
-            
+
             optimizer.zero_grad()
-            
+
             if model_type == "rnn":
-                # RNN模型需要初始化隐藏状态
                 hidden = None
                 outputs, _ = model(inputs, hidden)
             else:
-                # Transformer模型直接处理
                 outputs = model(inputs)
-            
-            # 计算损失
+
             loss = criterion(outputs.view(-1, vocab_size), targets.view(-1))
             loss.backward()
-            
-            # 梯度裁剪，防止梯度爆炸
             nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-            
             optimizer.step()
             total_loss += loss.item()
-        
-        # 打印训练进度
+
         avg_loss = total_loss / len(dataloader)
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
-    
-    return model
+        ppl = torch.exp(torch.tensor(avg_loss))  # Perplexity = exp(loss)
+
+        loss_list.append(avg_loss)
+        ppl_list.append(ppl.item())
+
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, PPL: {ppl:.2f}")
+
+    return model, loss_list, ppl_list
 
 def main(args):
     # 加载数据
@@ -109,7 +111,7 @@ def main(args):
     
     # 训练模型
     print(f"开始训练 {args.model_type.upper()} 模型（{args.poem_type}）...")
-    trained_model = train_model(
+    trained_model, loss_list, ppl_list = train_model(
         model=model,
         dataloader=dataloader,
         vocab_size=vocab_size,
@@ -121,6 +123,21 @@ def main(args):
     # 保存模型
     torch.save(trained_model.state_dict(), model_path)
     print(f"模型已保存至: {model_path}")
+    # 绘图保存
+    plt.figure(figsize=(10, 5))
+    plt.plot(loss_list, label="Loss")
+    plt.plot(ppl_list, label="PPL (Perplexity)")
+    plt.xlabel("Epoch")
+    plt.ylabel("Value")
+    plt.title(f"{args.model_type.upper()}-{args.poem_type} Loss & PPL")
+    plt.legend()
+    plt.grid(True)
+
+    # 确保图像目录存在
+    os.makedirs("results", exist_ok=True)
+    plot_path = f"results/{args.model_type}_{args.poem_type}_curve.png"
+    plt.savefig(plot_path)
+    print(f"训练曲线已保存至: {plot_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="古诗生成模型训练")
